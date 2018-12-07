@@ -1,0 +1,62 @@
+{
+  "name": "fftnet-vocoder",
+  "n_gpu": 1,
+  "arch": {
+    "type": "FFTNet",
+    "args": {
+      "n_blocks": 1,
+      "n_layers": 11,
+      "classes": 256,
+      "radix": 2,
+      "descending": true,
+      "aux_channels": 80,
+      "fft_channels": 128
+    }
+  },
+  "data_loader": {
+    "type": "RandomWaveFileLoader",
+    "args": {
+      "data_dir": "data/",
+      "batch_size": 1,
+      "num_workers": 2,
+      "hop_size": 256,
+      "segment": 5000,
+      "quantization_channels": 256,
+      "injected_noise": true
+    }
+  },
+  "optimizer": {
+    "type": "Adam",
+    "args": {
+      "lr": 1e-3
+    }
+  },
+  "loss": "cross_entropy",
+  "lr_scheduler": {
+    "type": "StepLR",
+    "args": {
+      "step_size": 10000,
+      "gamma": 0.1
+    }
+  },
+  "trainer": {
+    "steps": 100000,
+    "save_dir": "saved/",
+    "save_freq": 10000,
+    "verbosity": 2
+  },
+  "visualization": {
+    "tensorboardX": false,
+    "log_dir": "saved/runs"
+  },
+  "feature": {
+    "type": "get_logmel",
+    "args": {
+      "sr": 16000,
+      "n_fft": 2048,
+      "hop_length": 256,
+      "n_mels":80,
+      "fmax": 8000
+    }
+  }
+}
