@@ -5,8 +5,9 @@ from torch.nn import functional as F
 from model.module import FFTNetLayer, WaveNetLayer, Queue
 from base.base_model import BaseModel
 
+
 class _BaseModel(BaseModel):
-    def __init__(self, n_blocks, n_layers, classes, radix, descending, encode_size):
+    def __init__(self, n_blocks, n_layers, classes, radix, descending):
         super().__init__()
         dilations = radix ** torch.arange(n_layers)
         dilations = dilations.tolist()
@@ -16,15 +17,6 @@ class _BaseModel(BaseModel):
         self.cls = classes
         self.r_field = sum(self.dilations) + 1
         self.rdx = radix
-
-        self.emb = nn.Embedding(classes, encode_size, padding_idx=classes // 2 - 1)
-
-    def forward(self, x, y):
-        x = self.emb(x).transpose(1, 2)
-        return self.signal_flow(x, y)
-
-    def signal_flow(self, x, y):
-        raise NotImplementedError
 
 
 class WaveNet(_BaseModel):
@@ -39,11 +31,15 @@ class WaveNet(_BaseModel):
                  residual_channels=256,
                  skip_channels=256,
                  bias=False):
-        super().__init__(n_blocks, n_layers, classes, radix, descending, residual_channels)
+        super().__init__(n_blocks, n_layers, classes, radix, descending)
         self.res_chs = residual_channels
         self.dil_chs = dilation_channels
         self.skp_chs = skip_channels
         self.aux_chs = aux_channels
+        self.bias = bias
+
+        self.emb = nn.Sequential(nn.Embedding(classes, residual_channels, padding_idx=classes // 2 - 1),
+                                 nn.Tanh())
 
         self.layers = nn.ModuleList(WaveNetLayer(d,
                                                  dilation_channels,
@@ -66,7 +62,8 @@ class WaveNet(_BaseModel):
                                  nn.ReLU(inplace=True),
                                  nn.Conv1d(skip_channels, classes, 1, bias=bias))
 
-    def signal_flow(self, x, y):
+    def forward(self, x, y):
+        x = self.emb(x).transpose(1, 2)
         cum_skip = 0
         for layer in self.layers:
             x, skip = layer(x, y, True)
@@ -105,10 +102,11 @@ class FFTNet(_BaseModel):
                  aux_channels=26,
                  fft_channels=128,
                  bias=False):
-        super().__init__(n_blocks, n_layers, classes, radix, descending, fft_channels)
+        super().__init__(n_blocks, n_layers, classes, radix, descending)
         self.fft_chs = fft_channels
         self.aux_chs = aux_channels
-
+        self.bias = bias
+        self.emb = nn.Embedding(classes, fft_channels, padding_idx=classes // 2 - 1)
         self.layers = nn.ModuleList(FFTNetLayer(d,
                                                 fft_channels,
                                                 aux_channels,
@@ -117,7 +115,8 @@ class FFTNet(_BaseModel):
 
         self.end = nn.Conv1d(fft_channels, classes, 1, bias=bias)
 
-    def signal_flow(self, x, y):
+    def forward(self, x, y):
+        x = self.emb(x).transpose(1, 2)
         for layer in self.layers:
             x = layer(x, y, True)
         return self.end(x)[..., None]
@@ -137,18 +136,3 @@ class FastFFTNet(FFTNet):
         logits = self.end(x).view(-1).mul_(c)
         probs = F.softmax(logits, 0)
         return torch.distributions.Categorical(probs).sample()
-
-
-if __name__ == '__main__':
-    from tqdm import tqdm
-
-    train_net = WaveNet(1, 10, aux_channels=26, dilation_channels=128, residual_channels=128, skip_channels=128)
-    infer_net = FastWaveNet(1, 10, aux_channels=26, dilation_channels=128, residual_channels=128,
-                            skip_channels=128)
-    infer_net.load_state_dict(train_net.state_dict(), False)
-
-    x = torch.LongTensor([127])
-    y = torch.rand(1, 26, 44100)
-
-    for i in tqdm(range(22050)):
-        x = infer_net(x, y)

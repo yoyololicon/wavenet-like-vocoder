@@ -20,7 +20,7 @@ def main(config, root, data_dir, n_workers):
             name, y, h = future.result()
             data_dict[name] = y
             feature_dict[name] = h
-
+    os.makedirs(data_dir, exist_ok=True)
     np.savez(os.path.join(data_dir, 'data'), **data_dict)
     np.savez(os.path.join(data_dir, 'feature'), **feature_dict)
 

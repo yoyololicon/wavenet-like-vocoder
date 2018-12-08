@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 
 class WaveNetLayer(nn.Module):
@@ -48,9 +49,7 @@ class FFTNetLayer(nn.Module):
             nn.Conv1d(channels + aux_channels, channels, kernel_size=radix, dilation=dilation,
                       bias=bias),
             nn.ReLU(inplace=True),
-            nn.Conv1d(channels, channels, 1, bias=bias),
-            nn.ReLU(inplace=True)
-        )
+            nn.Conv1d(channels, channels, 1, bias=bias))
         self.pad = nn.ConstantPad1d((dilation * (radix - 1), 0), 0.)
 
     def forward(self, x, y, zeropad):
@@ -58,7 +57,8 @@ class FFTNetLayer(nn.Module):
         xy = torch.cat((x, y[:, :, -x.size(2):]), 1)
         if zeropad:
             xy = self.pad(xy)
-        return self.WV(xy)
+        z = self.WV(xy)
+        return F.relu(z + x[:, :, -z.size(2):], True)  # add residual connection for better converge
 
 
 class Queue(nn.Module):
@@ -73,12 +73,15 @@ class Queue(nn.Module):
 
 
 if __name__ == '__main__':
-    net = Queue(2, 8, 2)
-    print(net.buf)
-    sample = torch.rand(1, 2, 1)
-    sample = net(sample)
+    x = torch.rand(128)
+    w = torch.randn(128, 128)
 
-    print(net.buf)
+    from tqdm import tqdm
 
-    net = FFTNetLayer(2, 4, 4, 2, False)
-    print(net.state_dict())
+    for i in tqdm(range(44100)):
+        for j in range(11):
+            x = w @ x + x
+            # torch.cat((w[:, 1:], w[:, -1:]), 1, out=w)
+            # x.max()
+            # x = F.softmax(x, 0)
+        # torch.distributions.Categorical(x).sample()
