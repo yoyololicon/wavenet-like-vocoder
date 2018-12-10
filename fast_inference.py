@@ -44,6 +44,89 @@ def _dot_add(w, x, b):
     return y
 
 
+class FastWaveNet(module_arch.WaveNet):
+    '''
+
+    only for radix = 2
+    '''
+
+    def __init__(self, wavenet_state, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.load_state_dict(wavenet_state)
+        self.cpu()
+
+        self.condition_conv = nn.ModuleList(
+            nn.Conv1d(self.aux_chs, self.dil_chs * 2, 2, dilation=d, bias=self.bias) for d in self.dilations)
+        self.W1 = []
+        self.W2 = []
+        self.W2_b = []
+        for i, layer in enumerate(self.layers):
+            self.condition_conv[i].weight.data.copy_(layer.WV.weight.data[:, -self.aux_chs:])
+            self.W1.append(
+                layer.WV.weight.data[:, :self.res_chs].transpose(1, 2).contiguous().view(self.dil_chs * 2,
+                                                                                         self.res_chs * 2))
+            self.W2.append(layer.W_o.weight.data.squeeze())
+            if self.bias:
+                self.condition_conv[i].bias.data.copy_(layer.WV.bias.data)
+                self.W2_b.append(layer.W_o.bias.data.clone())
+            else:
+                self.W2_b.append(None)
+
+        self.end1_w = self.end[1].weight.data.squeeze()
+        if self.bias:
+            self.end1_b = self.end[1].bias.data.clone()
+        else:
+            self.end1_b = None
+
+        self.end2_w = self.end[3].weight.data.squeeze()
+        if self.bias:
+            self.end2_b = self.end[3].bias.data.clone()
+        else:
+            self.end2_b = None
+        self.buf_list = nn.ModuleList(Queue(self.res_chs, d) for d in self.dilations)
+
+        delattr(self, "layers")
+        delattr(self, "end")
+
+    @torch.no_grad()
+    def forward(self, y, c=1.):
+        print("pre-compute middle output of feature...")
+        y = y[None, ...].cuda()
+        self.condition_conv.cuda()
+        hidden_y = []
+        for d, layer in zip(self.dilations, self.condition_conv):
+            hidden_y.append(layer(F.pad(y, (d, 0))).squeeze(0).cpu())
+
+        # hidden_y = torch.cat(hidden_y, 0)
+        print("pre-computation done.")
+
+        outputs = torch.LongTensor(y.size(2) + 1).fill_(self.cls // 2 - 1)
+        for pos in tqdm(range(y.size(2))):
+            x = self.emb(outputs[pos]).view(-1)
+            cum_skip = None
+            for w1, w2, w2b, buf, hid_y in zip(self.W1, self.W2, self.W2_b, self.buf_list, hidden_y):
+                prev = buf(x)
+                concat = torch.cat((prev, x), 0)
+                z, zf = _dot_add(w1, concat, hid_y[:, pos]).split(self.dil_chs, 0)
+                z.tanh_().mul_(zf.sigmoid_())
+                z = _dot_add(w2, z, w2b)
+                if cum_skip is None:
+                    cum_skip = z[-self.skp_chs:]
+                else:
+                    cum_skip += z[-self.skp_chs:]
+                if cum_skip.size(0) != z.size(0):
+                    x += z[:self.res_chs]
+            x = F.relu(cum_skip, True)
+            x = F.relu(_dot_add(self.end1_w, x, self.end1_b), True)
+            x = _dot_add(self.end2_w, x, self.end2_b)
+            x *= c
+            probs = F.softmax(x, 0)
+            outputs[pos + 1] = torch.distributions.Categorical(probs).sample()
+
+        return outputs
+
+
 class FastFFTNet(module_arch.FFTNet):
     '''
 
