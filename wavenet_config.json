@@ -19,10 +19,9 @@
     "type": "RandomWaveFileLoader",
     "args": {
       "data_dir": "data/",
-      "batch_size": 4,
+      "batch_size": 10,
       "num_workers": 2,
-      "hop_size": 128,
-      "segment": 16384,
+      "segment": 5000,
       "quantization_channels": 256,
       "injected_noise": false
     }
@@ -30,7 +29,7 @@
   "optimizer": {
     "type": "Adam",
     "args": {
-      "lr": 1e-3
+      "lr": 2e-4
     }
   },
   "loss": "cross_entropy",
@@ -42,9 +41,9 @@
     }
   },
   "trainer": {
-    "steps": 1000000,
+    "steps": 500000,
     "save_dir": "saved/",
-    "save_freq": 500000,
+    "save_freq": 50000,
     "verbosity": 2
   },
   "visualization": {

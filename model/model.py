@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+from tqdm import tqdm
 
 from model.module import FFTNetLayer, WaveNetLayer, Queue
 from base.base_model import BaseModel
@@ -77,19 +78,25 @@ class FastWaveNet(WaveNet):
         self.buf_list = nn.ModuleList(Queue(self.res_chs, d, self.rdx) for d in self.dilations)
 
     @torch.no_grad()
-    def forward(self, x, y, c=1.):
-        # x should be one sample long
-        x = self.emb(x).view(1, -1, 1)
-        cum_skip = None
-        for i, (layer, buf) in enumerate(zip(self.layers, self.buf_list)):
-            x, skip = layer(buf(x), y, False)
-            if i:
-                cum_skip += skip
-            else:
-                cum_skip = skip
-        logits = self.end(cum_skip).view(-1).mul_(c)
-        probs = F.softmax(logits, 0)
-        return torch.distributions.Categorical(probs).sample()
+    def forward(self, y, c=1.):
+        total_len = y.size(1)
+        max_d = max(self.dilations)
+        outputs = torch.empty(total_len + 1, dtype=torch.long, device=y.device).fill_(self.cls // 2 - 1)
+        y = F.pad(y, (max_d, 0)).unsqueeze(0)
+
+        for pos in tqdm(range(total_len)):
+            x = self.emb(outputs[pos]).view(1, -1, 1)
+            cum_skip = None
+            for i, (layer, buf) in enumerate(zip(self.layers, self.buf_list)):
+                x, skip = layer(buf(x), y[..., :pos + max_d + 1], False)
+                if i:
+                    cum_skip += skip
+                else:
+                    cum_skip = skip
+            logits = self.end(cum_skip).view(-1).mul_(c)
+            probs = F.softmax(logits, 0)
+            outputs[pos + 1] = torch.distributions.Categorical(probs).sample()
+        return outputs[1:]
 
 
 class FFTNet(_BaseModel):
@@ -128,11 +135,17 @@ class FastFFTNet(FFTNet):
         self.buf_list = nn.ModuleList(Queue(self.fft_chs, d, self.rdx) for d in self.dilations)
 
     @torch.no_grad()
-    def forward(self, x, y, c=1.):
-        # x should be one sample long
-        x = self.emb(x).view(1, -1, 1)
-        for layer, buf in zip(self.layers, self.buf_list):
-            x = layer(buf(x), y, 0)
-        logits = self.end(x).view(-1).mul_(c)
-        probs = F.softmax(logits, 0)
-        return torch.distributions.Categorical(probs).sample()
+    def forward(self, y, c=1.):
+        total_len = y.size(1)
+        max_d = max(self.dilations)
+        outputs = torch.empty((total_len + 1,), dtype=torch.long, device=y.device).fill_(self.cls // 2 - 1)
+        y = F.pad(y, (max_d, 0)).unsqueeze(0)
+
+        for pos in tqdm(range(total_len)):
+            x = self.emb(outputs[pos]).view(1, -1, 1)
+            for layer, buf in zip(self.layers, self.buf_list):
+                x = layer(buf(x), y[:, :, :pos + max_d + 1], False)
+            logits = self.end(x).view(-1).mul_(c)
+            probs = F.softmax(logits, 0)
+            outputs[pos + 1] = torch.distributions.Categorical(probs).sample()
+        return outputs[1:]

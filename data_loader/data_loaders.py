@@ -12,11 +12,9 @@ class _WAVDataset(Dataset):
     def __init__(self,
                  data_dir,
                  size,
-                 hop_size,
                  segment,
                  quantization_channels,
                  injected_noise=True):
-        self.hop_size = hop_size
         self.segment = segment
         self.data_path = os.path.expanduser(data_dir)
         self.size = size
@@ -29,17 +27,25 @@ class _WAVDataset(Dataset):
         self.idx_name = []
         self.waves = dict()
         for name, x in data.items():
-            self.idx_name.append(name)
-            self.waves[name] = x
+            if name == 'sr':
+                self.sr = x[0]
+            else:
+                self.idx_name.append(name)
+                self.waves[name] = x
 
         data = np.load(os.path.join(data_dir, 'feature.npz'))
         self.features = dict()
         max_len = 0
         for name, h in data.items():
-            assert name in self.idx_name
-            self.features[name] = h
-            max_len = max(max_len, h.shape[1])
-        self.hop_idx = np.arange(max_len) * hop_size
+            if name == 'hop_size':
+                self.hop_size = h[0]
+            else:
+                assert name in self.idx_name
+                self.features[name] = h
+                max_len = max(max_len, h.shape[1])
+        self.hop_idx = np.arange(max_len) * self.hop_size
+
+        assert hasattr(self, 'sr') and hasattr(self, 'hop_size')
 
     def __len__(self):
         return self.size
