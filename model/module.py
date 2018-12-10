@@ -76,11 +76,13 @@ if __name__ == '__main__':
     x = torch.rand(128)
     w = torch.randn(128, 128)
 
+    print(torch.__version__)
+
     from tqdm import tqdm
 
     for i in tqdm(range(44100)):
         for j in range(11):
-            x = w @ x + x
+            x = w @ x #+ x
             # torch.cat((w[:, 1:], w[:, -1:]), 1, out=w)
             # x.max()
             # x = F.softmax(x, 0)
