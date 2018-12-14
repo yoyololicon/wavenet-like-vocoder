@@ -240,7 +240,6 @@ if __name__ == '__main__':
     parser.add_argument('npzfile', type=str)
     parser.add_argument('outfile', type=str)
     parser.add_argument('-c', type=float, default=1.)
-    parser.add_argument('--cuda', action='store_true')
     parser.add_argument('-r', '--resume', default=None, type=str,
                         help='path to latest checkpoint (default: None)')
 
