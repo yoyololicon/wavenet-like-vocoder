@@ -65,6 +65,10 @@ class _WAVDataset(Dataset):
             x = np.clip(x, -1, 1)
         x = self.f2c(self.mulaw(x))
 
+        # fix possible outlier
+        x = np.clip(x, 0, self.q_channels - 1)
+        t = np.clip(t, 0, self.q_channels - 1)
+
         f = interp1d(self.hop_idx[:condition.shape[1]], condition, copy=False, axis=1)
         h = f(np.arange(pos + 1, pos + 1 + self.segment))
 
@@ -77,3 +81,13 @@ class RandomWaveFileLoader(DataLoader):
         self.data_dir = data_dir
         self.dataset = _WAVDataset(data_dir, batch_size * steps, **kwargs)
         super().__init__(self.dataset, batch_size, num_workers=num_workers)
+
+
+if __name__ == '__main__':
+    mulaw = np_mulaw(256)
+    f2c = float2class(256)
+
+    import numpy as np
+
+    x = np.random.randn(10000)
+    print(f2c(mulaw(x)).max(), f2c(mulaw(x)).min())
