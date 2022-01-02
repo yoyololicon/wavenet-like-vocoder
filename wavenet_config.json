@@ -1,6 +1,6 @@
 {
   "name": "wavenet-vocoder",
-  "n_gpu": 2,
+  "n_gpu": 1,
   "arch": {
     "type": "WaveNet",
     "args": {
@@ -10,16 +10,16 @@
       "radix": 2,
       "descending": false,
       "aux_channels": 80,
-      "dilation_channels": 128,
+      "dilation_channels": 256,
       "residual_channels": 256,
-      "skip_channels": 256
+      "skip_channels": 128
     }
   },
   "data_loader": {
     "type": "RandomWaveFileLoader",
     "args": {
       "data_dir": "data/",
-      "batch_size": 10,
+      "batch_size": 5,
       "num_workers": 2,
       "segment": 5000,
       "quantization_channels": 256,
@@ -36,14 +36,15 @@
   "lr_scheduler": {
     "type": "StepLR",
     "args": {
-      "step_size": 100000,
+      "step_size": 1000000,
       "gamma": 0.5
     }
   },
   "trainer": {
-    "steps": 500000,
+    "steps": 200000,
     "save_dir": "saved/",
-    "save_freq": 50000,
+    "save_freq": 40000,
+    "mixed_precision": true,
     "verbosity": 2
   },
   "visualization": {

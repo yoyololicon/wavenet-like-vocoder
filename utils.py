@@ -2,6 +2,11 @@ import os
 import numpy as np
 from torch import nn
 
+
+def get_instance(module, config, *args):
+    return getattr(module, config['type'])(*args, **config['args'])
+
+
 def np_mulaw(qc):
     mu = qc - 1
 
@@ -36,6 +41,7 @@ def class2float(qc):
         return x / mu * 2 - 1
 
     return convert
+
 
 def remove_weight_norms(m):
     if hasattr(m, 'weight_g'):

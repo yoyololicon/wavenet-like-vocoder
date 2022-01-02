@@ -1,71 +1,73 @@
 import os
 import json
 import argparse
+
 import torch
-import data_loader.data_loaders as module_data
-import model.loss as module_loss
-import model.model as module_arch
-from trainer import Trainer
-from utils import Logger
-from utils.util import add_weight_norms
 
 
-def get_instance(module, name, config, *args):
-    return getattr(module, config[name]['type'])(*args, **config[name]['args'])
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelSummary, LearningRateMonitor
+from pytorch_lightning.plugins import DDPPlugin
 
 
-def main(config, resume):
-    # train_logger = Logger()
+from model import LightModel
 
-    # setup data_loader instances
-    steps = config['trainer']['steps']
-    data_loader = get_instance(module_data, 'data_loader', config, steps)
 
-    # build model architecture
-    model = get_instance(module_arch, 'arch', config)
-    model.summary()
-    # model.apply(add_weight_norms)
+class ChangeLRCallback(pl.Callback):
+    def __init__(self, lr: float) -> None:
+        super().__init__()
+        self.lr = lr
 
-    # get function handles of loss and metrics
-    loss = getattr(module_loss, config['loss'])
+    def on_train_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        for optimizer in trainer.optimizers:
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = self.lr
 
-    # build optimizer, learning rate scheduler. delete every lines containing lr_scheduler for disabling scheduler
-    trainable_params = filter(lambda p: p.requires_grad, model.parameters())
-    optimizer = get_instance(torch.optim, 'optimizer', config, trainable_params)
-    lr_scheduler = get_instance(torch.optim.lr_scheduler, 'lr_scheduler', config, optimizer)
 
-    trainer = Trainer(model, loss, optimizer,
-                      resume=resume,
-                      config=config,
-                      data_loader=data_loader,
-                      lr_scheduler=lr_scheduler
-                      )
+def main(args, config):
+    pl.seed_everything(args.seed)
 
-    trainer.train()
+    gpus = torch.cuda.device_count()
+    if config is not None:
+        config['data_loader']['batch_size'] //= gpus
+
+    callbacks = [
+        ModelSummary(max_depth=-1),
+        LearningRateMonitor('epoch')
+    ]
+
+    if args.lr:
+        callbacks.append(ChangeLRCallback(args.lr))
+
+    if args.ckpt_path and config is None:
+        lit_model = LightModel.load_from_checkpoint(args.ckpt_path)
+    else:
+        lit_model = LightModel(config_dict=config, **vars(args))
+
+    trainer = pl.Trainer.from_argparse_args(
+        args, callbacks=callbacks, log_every_n_steps=1,
+        benchmark=True, detect_anomaly=True, gpus=gpus,
+        strategy=DDPPlugin(find_unused_parameters=False) if gpus > 1 else None)
+    trainer.fit(lit_model, ckpt_path=args.ckpt_path)
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config', default=None, type=str,
+    parser = argparse.ArgumentParser(description='Autoregressive Vocoders')
+    parser = LightModel.add_model_specific_args(parser)
+    parser = pl.Trainer.add_argparse_args(parser)
+    parser.add_argument('--config', type=str,
                         help='config file path (default: None)')
-    parser.add_argument('-r', '--resume', default=None, type=str,
-                        help='path to latest checkpoint (default: None)')
-    parser.add_argument('-d', '--device', default=None, type=str,
-                        help='indices of GPUs to enable (default: all)')
+    parser.add_argument('--ckpt-path', type=str)
+    parser.add_argument('--test-file', type=str)
+    parser.add_argument('--seed', type=int, default=None)
+    parser.add_argument('--lr', type=float, default=None,
+                        help='force learning rate')
+    parser.add_argument('--no-tf32', action='store_true')
     args = parser.parse_args()
 
-    if args.config:
-        # load config file
-        config = json.load(open(args.config))
-        path = os.path.join(config['trainer']['save_dir'], config['name'])
-    elif args.resume:
-        # load config file from checkpoint, in case new config file is not given.
-        # Use '--config' and '--resume' arguments together to load trained model and train more with changed config.
-        config = torch.load(args.resume)['config']
-    else:
-        raise AssertionError("Configuration file need to be specified. Add '-c config.json', for example.")
+    if args.no_tf32 and torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
 
-    if args.device:
-        os.environ["CUDA_VISIBLE_DEVICES"] = args.device
-
-    main(config, args.resume)
+    config = json.load(open(args.config)) if args.config else None
+    main(args, config)

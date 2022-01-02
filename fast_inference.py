@@ -6,8 +6,9 @@ import model.model as module_arch
 
 import argparse
 import numpy as np
-from utils.util import class2float, np_mulw_inv
-from librosa.output import write_wav
+from utils import class2float, np_mulw_inv
+import soundfile as sf
+#from librosa.output import write_wav
 from scipy.interpolate import interp1d
 
 
@@ -34,7 +35,7 @@ class Queue(nn.Module):
     def init(self):
         self.buf.zero_()
 
-
+@torch.jit.script
 def _dot_add(w, x, b):
     y = w @ x
     if b is None:
@@ -71,19 +72,19 @@ class FastWaveNet(module_arch.WaveNet):
                 self.condition_conv[i].bias.data.copy_(layer.WV.bias.data)
                 self.W2_b.append(layer.W_o.bias.data.clone())
             else:
-                self.W2_b.append(None)
+                self.W2_b.append(torch.zeros(1))
 
         self.end1_w = self.end[1].weight.data.squeeze()
         if self.bias:
             self.end1_b = self.end[1].bias.data.clone()
         else:
-            self.end1_b = None
+            self.end1_b = torch.zeros(1)
 
         self.end2_w = self.end[3].weight.data.squeeze()
         if self.bias:
             self.end2_b = self.end[3].bias.data.clone()
         else:
-            self.end2_b = None
+            self.end2_b = torch.zeros(1)
         self.buf_list = nn.ModuleList(Queue(self.res_chs, d) for d in self.dilations)
 
         delattr(self, "layers")
@@ -202,7 +203,7 @@ def main(config, resume, npzfile, outfile, c):
     q_channels = config['arch']['args']['classes']
 
     # load state dict
-    checkpoint = torch.load(resume)
+    checkpoint = torch.load(resume, map_location=torch.device('cpu'))
     state_dict = checkpoint['state_dict']
     if config['n_gpu'] > 1:
         model = torch.nn.DataParallel(model)
@@ -232,7 +233,8 @@ def main(config, resume, npzfile, outfile, c):
     inv_fn = np_mulw_inv(q_channels)
 
     outputs = inv_fn(c2f(outputs.cpu().numpy()))
-    write_wav(outfile, outputs, sr)
+    sf.write(outfile, outputs, sr, subtype='PCM_16')
+    #write_wav(outfile, outputs, sr)
 
 
 if __name__ == '__main__':

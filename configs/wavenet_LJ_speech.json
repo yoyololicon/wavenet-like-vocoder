@@ -1,0 +1,53 @@
+{
+    "name": "PyTorch WaveNet",
+    "arch": {
+        "type": "WaveNet",
+        "args": {
+            "hop_length": 256,
+            "n_blocks": 2,
+            "n_layers": 5,
+            "radix": 4,
+            "dilation_channels": 128,
+            "residual_channels": 256,
+            "skip_channels": 128,
+            "descending": true
+        }
+    },
+    "dataset": {
+        "type": "AutoregressiveWAVDataset",
+        "args": {
+            "data_dir": "~/data-disk/Datasets/LJSpeech-1.1/wavs/",
+            "size": 12000,
+            "segment": 5000,
+            "deterministic": false
+        }
+    },
+    "data_loader": {
+        "batch_size": 12,
+        "shuffle": false,
+        "num_workers": 4,
+        "prefetch_factor": 4,
+        "pin_memory": true
+    },
+    "optimizer": {
+        "type": "Adam",
+        "args": {
+            "lr": 0.001,
+            "weight_decay": 0
+        }
+    },
+    "lightning": {
+        "q_channels": 256,
+        "padding_method": "same"
+    },
+    "conditioner": {
+        "type": "MelSpec",
+        "args": {
+            "sr": 22050,
+            "n_fft": 1024,
+            "hop_length": 256,
+            "f_max": 8000,
+            "n_mels": 80
+        }
+    }
+}

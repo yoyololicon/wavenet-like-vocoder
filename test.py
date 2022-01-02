@@ -1,11 +1,12 @@
 import os
 import argparse
 import torch
-from librosa.output import write_wav
+#from librosa.output import write_wav
+import soundfile as sf
 import numpy as np
 from scipy.interpolate import interp1d
 import model.model as module_arch
-from utils.util import class2float, np_mulw_inv
+from utils import class2float, np_mulw_inv
 
 
 def main(config, resume, npzfile, outfile, c, cuda):
@@ -43,7 +44,8 @@ def main(config, resume, npzfile, outfile, c, cuda):
     inv_fn = np_mulw_inv(q_channels)
 
     outputs = inv_fn(c2f(outputs.cpu().numpy()))
-    write_wav(outfile, outputs, sr)
+    sf.write(outfile, outputs, sr, subtype='PCM_16')
+    #write_wav(outfile, outputs, sr)
 
 
 if __name__ == '__main__':

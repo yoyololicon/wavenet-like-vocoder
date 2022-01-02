@@ -1,3 +1,4 @@
+from typing import Optional
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -9,81 +10,87 @@ class WaveNetLayer(nn.Module):
                  dilation_channels,
                  residual_channels,
                  skip_channels,
-                 aux_channels,
                  radix,
-                 bias,
                  last_layer=False):
         super().__init__()
+        self.dilation = dilation
         self.d_size = dilation_channels
-        self.WV = nn.Conv1d(residual_channels + aux_channels, dilation_channels * 2, kernel_size=radix,
-                            dilation=dilation, bias=bias)
+        self.last_layer = last_layer
+        self.WV = nn.Conv1d(residual_channels, dilation_channels * 2, kernel_size=radix,
+                            dilation=dilation, bias=False)
 
-        self.chs_split = [skip_channels]
         if last_layer:
-            self.W_o = nn.Conv1d(dilation_channels, skip_channels, 1, bias=bias)
+            self.W_o = nn.Conv1d(
+                dilation_channels, skip_channels, 1)
         else:
-            self.W_o = nn.Conv1d(dilation_channels, residual_channels + skip_channels, 1, bias=bias)
-            self.chs_split.insert(0, residual_channels)
+            self.W_o = nn.Conv1d(
+                dilation_channels, residual_channels + skip_channels, 1)
 
-        self.pad = nn.ConstantPad1d((dilation * (radix - 1), 0), 0.)
+        self.pad_size = dilation * (radix - 1)
+        self.pad = nn.ConstantPad1d((self.pad_size, 0), 0.)
 
-    def forward(self, x, y, zeropad):
-        xy = torch.cat((x, y[:, :, -x.size(2):]), 1)
+    def forward(self, x: torch.Tensor, y: torch.Tensor, zeropad: bool = False):
         if zeropad:
-            xy = self.pad(xy)
-        zw, zf = self.WV(xy).split(self.d_size, 1)
+            x = self.pad(x)
+        xy = self.WV(x)
+        xy += y[:, :, -xy.size(2):]
+        zw, zf = xy.chunk(2, 1)
         z = zw.tanh() * zf.sigmoid()
-        *z, skip = self.W_o(z).split(self.chs_split, 1)
-        return z[0] + x[:, :, -z[0].size(2):] if len(z) else None, skip
+        z = self.W_o(z)
+
+        if self.last_layer:
+            return None, z
+        else:
+            return z[:, :x.size(1)] + x[..., -z.size(2):], z[:, x.size(1):]
 
 
 class FFTNetLayer(nn.Module):
     def __init__(self,
                  dilation,
                  channels,
-                 aux_channels,
                  radix,
                  bias):
         super().__init__()
-        self.WV = nn.Sequential(
-            nn.Conv1d(channels + aux_channels, channels, kernel_size=radix, dilation=dilation,
-                      bias=bias),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(channels, channels, 1, bias=bias))
-        self.pad = nn.ConstantPad1d((dilation * (radix - 1), 0), 0.)
+        self.WV = nn.Conv1d(channels, channels,
+                            kernel_size=radix, dilation=dilation, bias=bias)
+        self.W_o = nn.Conv1d(channels, channels, 1, bias=bias)
+        self.pad_size = dilation * (radix - 1)
+        self.pad = nn.ConstantPad1d((self.pad_size, 0), 0.)
 
-    def forward(self, x, y, zeropad):
-        # type: (Tensor, Tensor, bool) -> Tensor
-        xy = torch.cat((x, y[:, :, -x.size(2):]), 1)
-        if zeropad:
-            xy = self.pad(xy)
-        z = self.WV(xy)
-        return F.relu(z + x[:, :, -z.size(2):], True)  # add residual connection for better converge
+    def forward(self, x: torch.Tensor, y: torch.Tensor, zeropad: bool, memory: Optional[torch.Tensor] = None):
+        new_memory: Optional[torch.Tensor] = None
+        if memory is not None:
+            x = torch.cat([memory, x], dim=2)
+            new_memory = x[..., -self.pad_size:]
+        elif zeropad:
+            x = self.pad(x)
+        z = self.WV(x)
+        z += y[:, :, -z.size(2):]
+        z.relu_()
+        z = self.W_o(z)
+        # add residual connection for better converge
+        return F.relu(z + x[:, :, -z.size(2):], True), new_memory
 
 
 class Queue(nn.Module):
     def __init__(self, channels, dilation, radix):
         super().__init__()
-        self.buf = nn.Parameter(torch.zeros(1, channels, dilation * (radix - 1) + 1), requires_grad=False)
+        self.register_buffer('buf', torch.zeros(
+            1, channels, dilation * (radix - 1) + 1))
 
     def forward(self, sample):
-        data = self.buf.data
-        torch.cat((data[:, :, 1:], sample), 2, out=self.buf.data)
+        torch.cat((self.buf[:, :, 1:], sample), 2, out=self.buf)
         return self.buf
 
 
 if __name__ == '__main__':
-    x = torch.rand(128)
-    w = torch.randn(128, 128)
+    model = WaveNetLayer(4, 32, 32, 32, 2, True, True)
+    # model = FFTNetLayer(4, 32, 2, True)
+    print(model)
+    model = torch.jit.script(model)
+    print(model.code)
 
-    print(torch.__version__)
-
-    from tqdm import tqdm
-
-    for i in tqdm(range(44100)):
-        for j in range(11):
-            x = w @ x #+ x
-            # torch.cat((w[:, 1:], w[:, -1:]), 1, out=w)
-            # x.max()
-            # x = F.softmax(x, 0)
-        # torch.distributions.Categorical(x).sample()
+    x = torch.randn(1, 32, 100)
+    y = torch.randn(1, 64, 100)
+    y, mem = model(x, y, True)
+    print(y.size())
