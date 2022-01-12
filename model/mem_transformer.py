@@ -102,7 +102,7 @@ class DecoderLayer(nn.Module):
         return x + self.FF(x)
 
 
-class WaveTransformer(MemModel):
+class Waveformer(MemModel):
     def __init__(self,
                  n_token: int,
                  d_model: int,
