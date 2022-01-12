@@ -1,3 +1,4 @@
 *.pyc
 *.npz
 lightning_logs/*
+data/*
