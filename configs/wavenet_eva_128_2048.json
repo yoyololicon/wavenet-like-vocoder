@@ -3,28 +3,26 @@
     "arch": {
         "type": "WaveNet",
         "args": {
-            "hop_length": 256,
             "n_blocks": 2,
-            "n_layers": 5,
-            "radix": 4,
+            "n_layers": 10,
+            "radix": 2,
             "dilation_channels": 128,
-            "residual_channels": 256,
+            "residual_channels": 128,
             "skip_channels": 128,
-            "descending": true
+            "descending": false
         }
     },
     "dataset": {
         "type": "AutoregressiveWAVDataset",
         "args": {
-            "data_dir": "~/data-disk/Datasets/LJSpeech-1.1/wavs/",
-            "size": 12000,
+            "data_dir": "./data/train",
             "segment": 5000,
-            "deterministic": false
+            "overlap": 2046
         }
     },
     "data_loader": {
-        "batch_size": 12,
-        "shuffle": false,
+        "batch_size": 10,
+        "shuffle": true,
         "num_workers": 4,
         "prefetch_factor": 4,
         "pin_memory": true
@@ -36,18 +34,20 @@
             "weight_decay": 0
         }
     },
-    "lightning": {
-        "q_channels": 256,
-        "padding_method": "same"
-    },
     "conditioner": {
         "type": "MelSpec",
         "args": {
             "sr": 22050,
             "n_fft": 1024,
             "hop_length": 256,
-            "f_max": 8000,
             "n_mels": 80
+        }
+    },
+    "upsampler": {
+        "type": "Upsample",
+        "args": {
+            "scale_factor": 256,
+            "mode": "linear"
         }
     }
 }
