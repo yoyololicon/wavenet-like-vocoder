@@ -51,6 +51,7 @@ def main(args, config):
     trainer.fit(lit_model, ckpt_path=args.ckpt_path)
 
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Autoregressive Vocoders')
     parser = LightModel.add_model_specific_args(parser)

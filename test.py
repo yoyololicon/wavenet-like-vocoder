@@ -1,69 +1,72 @@
 import os
 import argparse
 import torch
-#from librosa.output import write_wav
-import soundfile as sf
-import numpy as np
-from scipy.interpolate import interp1d
-import model.model as module_arch
-from utils import class2float, np_mulw_inv
+from torch.cuda import amp
+import torchaudio
+from utils import remove_weight_norms
+from time import time
+import math
+
+from model import LightModel, WaveNet, FastWaveNet, FFTNet, FastFFTNet
 
 
-def main(config, resume, npzfile, outfile, c, cuda):
-    # build model architecture
-    model = getattr(module_arch, 'Fast' + config['arch']['type'])(**config['arch']['args'])
-    q_channels = config['arch']['args']['classes']
-    model.summary()
+def main(ckpt, infile, outfile, half):
+    lit_model = LightModel.load_from_checkpoint(ckpt, map_location='cpu')
+    model = lit_model.model
+    conditioner = lit_model.conditioner
+    upsampler = lit_model.upsampler
+    decoder = lit_model.dec
+    emb = lit_model.emb
 
-    # load state dict
-    checkpoint = torch.load(resume)
-    state_dict = checkpoint['state_dict']
-    if config['n_gpu'] > 1:
-        model = torch.nn.DataParallel(model)
-    model.load_state_dict(state_dict, False)
-    if config['n_gpu'] > 1:
-        model = model.module
+    infer_model = {
+        WaveNet: FastWaveNet,
+        FFTNet: FastFFTNet
+    }[type(model)](model, emb[0].weight.detach())
 
-    # prepare model for testing
-    device = torch.device('cuda' if cuda else 'cpu')
-    model = model.to(device)
-    model.eval()
+    device = torch.device('cpu')
+    infer_model = infer_model.to(device)
+    conditioner = conditioner.to(device)
+    upsampler = upsampler.to(device)
+    decoder = decoder.to(device)
+    infer_model.eval()
+    # infer_model = torch.jit.script(infer_model)
+    # print(infer_model.code)
 
-    data = np.load(npzfile)
-    sr = data['sr'][0]
-    hop_size = data['hop_size'][0]
-    feature = data['feature']
-    x = np.arange(feature.shape[1]) * hop_size
-    f = interp1d(x, feature, axis=1)
-    feature = f(np.arange(x[-1]))
+    y, sr = torchaudio.load(infile)
+    y = y.mean(0, keepdim=True).to(device)
+    # y = y[..., :sr * 2]
 
-    feature = torch.Tensor(feature).to(device)
-    outputs = model(feature, c)
+    cond = upsampler(conditioner(y)).squeeze(0)
 
-    c2f = class2float(q_channels)
-    inv_fn = np_mulw_inv(q_channels)
+    # torch.onnx.export(infer_model, cond[:, :2], 'infer.onnx', verbose=True, opset_version=11,
+    #                   operator_export_type=torch.onnx.OperatorExportTypes.ONNX)
 
-    outputs = inv_fn(c2f(outputs.cpu().numpy()))
-    sf.write(outfile, outputs, sr, subtype='PCM_16')
-    #write_wav(outfile, outputs, sr)
+    # exit()
+
+    if half:
+        infer_model = infer_model.half()
+        cond = cond.half()
+        y = y.half()
+
+    with torch.no_grad():
+        start = time()
+        x = infer_model(cond)
+        x = decoder(x)
+        cost = time() - start
+
+    print("Time cost: {:.4f}, Speed: {:.4f} kHz".format(
+        cost, x.numel() / cost / 1000))
+    print(x.max().item(), x.min().item())
+
+    torchaudio.save(outfile, x.unsqueeze(0).cpu(), sr)
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('npzfile', type=str)
+    parser = argparse.ArgumentParser(description='Inferencer')
+    parser.add_argument('ckpt', type=str)
+    parser.add_argument('infile', type=str)
     parser.add_argument('outfile', type=str)
-    parser.add_argument('-c', type=float, default=1.)
-    parser.add_argument('--cuda', action='store_true')
-    parser.add_argument('-r', '--resume', default=None, type=str,
-                        help='path to latest checkpoint (default: None)')
-    parser.add_argument('-d', '--device', default=None, type=str,
-                        help='indices of GPUs to enable (default: all)')
-
+    parser.add_argument('--half', action='store_true')
     args = parser.parse_args()
 
-    if args.resume:
-        config = torch.load(args.resume)['config']
-    if args.device:
-        os.environ["CUDA_VISIBLE_DEVICES"] = args.device
-
-    main(config, args.resume, args.npzfile, args.outfile, args.c, args.cuda)
+    main(args.ckpt, args.infile, args.outfile, args.half)
