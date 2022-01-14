@@ -106,5 +106,5 @@ class LightModel(pl.LightningModule):
             total_loss += loss.item()
         opt.step()
 
-        self.log('total_loss', total_loss, prog_bar=True, on_step=True)
+        self.log('loss', total_loss, prog_bar=True, on_step=True)
         return loss

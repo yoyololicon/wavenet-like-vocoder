@@ -34,16 +34,16 @@ class RelativeMultiheadAttention(nn.Module):
         # self.mu = nn.Parameter(torch.randn(n_head, d_head) * 0.02)
         # self.nu = nn.Parameter(torch.randn(n_head, d_head) * 0.02)
 
-    def forward(self, x: Tensor, r: Tensor) -> Tensor:
+    def forward(self, x: Tensor, r: Tensor, memory: Tensor) -> Tensor:
         batch_size = x.size(0)
         ctx_size = r.size(0)
+        q_size = x.size(1)
+        mask = memory.eq(0).all(dim=-1)
 
+        head_q = self.q_net(x)
+        x = torch.cat([memory, x], dim=1)
         head_k, head_v = self.kv_net(x).unfold(1, ctx_size, 1).chunk(2, 2)
-        head_q = self.q_net(x[:, ctx_size-1:, :])
-        q_size = head_q.size(1)
         head_r = self.r_net(r)
-
-        mask = x[:, :ctx_size-1].eq(0).all(dim=-1)
 
         head_q = head_q.view(batch_size, q_size, self.n_head, self.d_head)
         head_k = head_k.reshape(
@@ -96,9 +96,8 @@ class DecoderLayer(nn.Module):
             nn.Dropout(dropout),
         )
 
-    def forward(self, x: Tensor, r: Tensor, y: Tensor) -> Tensor:
-        tmp = self.Attn(self.attn_norm(x + y), r)
-        x = x[:, -tmp.size(1):] + tmp
+    def forward(self, x: Tensor, r: Tensor, memory: Tensor) -> Tensor:
+        x = x + self.Attn(self.attn_norm(x), r, memory)
         return x + self.FF(x)
 
 
@@ -148,19 +147,16 @@ class Waveformer(MemModel):
 
     def init_memories(self, batch=None, dtype=None, device=None) -> List[Tensor]:
         mems = super().init_memories(batch=batch, dtype=dtype, device=device)
-        return [x.transpose(-1, -2) for x in mems] + [torch.zeros(batch, self.mem_sizes[-1], self.d_model, device=device, dtype=dtype)]
+        return [x.transpose(-1, -2) for x in mems]
 
     def forward(self, x: Tensor, y: Tensor, memories: List[Tensor], **kwargs):
         pos = self.pos_emb(self.pos)
         x = self.drop(x).transpose(1, 2)
         cond = self.condition(y.transpose(1, 2))
-        aug_cond = torch.cat([memories[-1], cond], dim=1)
 
         for i, layer in enumerate(self.layers):
-            x = torch.cat([memories[i], x], dim=1)
+            x = layer(x + cond, self.drop(pos), memories[i])
             memories[i] = x[:, -pos.size(0)+1:].detach()
-            x = layer(x, self.drop(pos), aug_cond)
-        memories[-1] = aug_cond[:, -pos.size(0)+1:].detach()
 
         x = self.drop(x)
         pred = self.linear_proj(x).transpose(1, 2)

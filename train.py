@@ -6,7 +6,7 @@ import torch
 
 
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelSummary, LearningRateMonitor
+from pytorch_lightning.callbacks import ModelSummary, LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.plugins import DDPPlugin
 
 
@@ -33,7 +33,8 @@ def main(args, config):
 
     callbacks = [
         ModelSummary(max_depth=-1),
-        LearningRateMonitor('epoch')
+        LearningRateMonitor('epoch'),
+        ModelCheckpoint(save_top_k=-1)
     ]
 
     if args.lr:
@@ -49,7 +50,6 @@ def main(args, config):
         benchmark=True, detect_anomaly=True, gpus=gpus,
         strategy=DDPPlugin(find_unused_parameters=False) if gpus > 1 else None)
     trainer.fit(lit_model, ckpt_path=args.ckpt_path)
-
 
 
 if __name__ == '__main__':
