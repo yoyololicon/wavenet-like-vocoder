@@ -155,8 +155,10 @@ class Waveformer(MemModel):
         cond = self.condition(y.transpose(1, 2))
 
         for i, layer in enumerate(self.layers):
-            x = layer(x + cond, self.drop(pos), memories[i])
+            x = x + cond
+            tmp = layer(x, self.drop(pos), memories[i])
             memories[i] = x[:, -pos.size(0)+1:].detach()
+            x = tmp
 
         x = self.drop(x)
         pred = self.linear_proj(x).transpose(1, 2)
