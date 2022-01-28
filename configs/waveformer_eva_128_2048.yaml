@@ -1,0 +1,65 @@
+max_epochs: 20
+
+args:
+    # config corresponding to the original ArgumentParser
+    seed: null
+    lr: null
+    ckpt_path: null
+    
+    # config corresponding to the original Lightning args
+    q_channels: 256
+    emb_channels: 128
+    memory_segment: 1000
+    padding_method: same # choices=['same', 'valid']
+    
+trainer:
+    log_every_n_steps: 1
+    benchmark: True
+    detect_anomaly: True
+
+
+name: "PyTorch Waveformer"
+arch:
+    type: "Waveformer"
+    args:
+        n_token: 256
+        d_model: 128
+        n_layer: 8
+        n_head: 8
+        aux_channels: 80
+        d_inner: 512
+        mem_len: 256
+        
+dataset:
+    type: "AutoregressiveWAVDataset"
+    args:
+        data_dir: "./data/train"
+        segment: 5000
+        overlap: 2041
+
+data_loader:
+    batch_size: 10
+    shuffle: true
+    num_workers: 4
+    prefetch_factor: 4
+    pin_memory: true
+    
+optimizer:
+    type: "Adam"
+    args:
+        lr: 0.0002
+        weight_decay: 0
+
+conditioner:
+    type: "MelSpec"
+    args:
+        sr: 22050
+        n_fft: 1024
+        hop_length: 256
+        n_mels: 80
+
+upsampler:
+    type: "Upsample"
+    args:
+        scale_factor: 256
+        mode: "linear"
