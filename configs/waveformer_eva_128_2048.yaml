@@ -16,6 +16,7 @@ trainer:
     log_every_n_steps: 1
     benchmark: True
     detect_anomaly: True
+    max_epochs: ${max_epochs}
 
 
 name: "PyTorch Waveformer"
