@@ -1,16 +1,15 @@
 max_epochs: 20
 
-args:
-    # config corresponding to the original ArgumentParser
-    seed: null
-    lr: null
-    ckpt_path: null
-    
-    # config corresponding to the original Lightning args
-    q_channels: 256
-    emb_channels: 128
-    memory_segment: 1000
-    padding_method: same # choices=['same', 'valid']
+# config corresponding to the original ArgumentParser
+seed: null
+lr: null
+ckpt_path: null
+
+# config corresponding to the original Lightning args
+q_channels: 256
+emb_channels: 128
+memory_segment: 1000
+padding_method: same # choices=['same', 'valid']
     
 trainer:
     log_every_n_steps: 1

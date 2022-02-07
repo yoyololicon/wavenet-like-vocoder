@@ -14,6 +14,7 @@ from model import LightModel
 
 import hydra
 from hydra.utils import to_absolute_path
+from omegaconf import OmegaConf
 
 
 class ChangeLRCallback(pl.Callback):
@@ -28,12 +29,12 @@ class ChangeLRCallback(pl.Callback):
 
 @hydra.main(config_path="configs", config_name="waveformer_eva_128_2048")
 def main(cfg):
-    pl.seed_everything(cfg.args.seed)
+    pl.seed_everything(cfg.seed)
     
     # convert relative path to absolute path
     cfg.dataset.args.data_dir = to_absolute_path(cfg.dataset.args.data_dir)
     
-    experiment_name = f"{cfg.arch.type}-memory_segment{cfg.args.memory_segment}"
+    experiment_name = f"{cfg.arch.type}-memory_segment{cfg.memory_segment}"
 
     gpus = torch.cuda.device_count()
     if cfg is not None:
@@ -45,13 +46,13 @@ def main(cfg):
         ModelCheckpoint(save_top_k=-1)
     ]
 
-    if cfg.args.lr:
+    if cfg.lr:
         callbacks.append(ChangeLRCallback(cfg.lr))
 
-    if cfg.args.ckpt_path:
-        lit_model = LightModel.load_from_checkpoint(cfg.args.ckpt_path)
+    if cfg.ckpt_path:
+        lit_model = LightModel.load_from_checkpoint(cfg.ckpt_path)
     else:
-        lit_model = LightModel(config_dict=cfg, **cfg.args)
+        lit_model = LightModel(cfg=cfg)
 
     logger = pl.loggers.TensorBoardLogger(save_dir='.', name=experiment_name)        
     trainer = pl.Trainer(
@@ -62,7 +63,7 @@ def main(cfg):
         logger=logger 
     )
         
-    trainer.fit(lit_model, ckpt_path=cfg.args.ckpt_path)
+    trainer.fit(lit_model, ckpt_path=cfg.ckpt_path)
 
 
 if __name__ == '__main__':
