@@ -4,6 +4,93 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from .model import WaveNet, FFTNet
+from .mem_transformer import Waveformer
+
+
+class FastWaveformer(nn.Module):
+    def __init__(self, waveformer: Waveformer, emb: torch.Tensor):
+        super().__init__()
+        self._model = waveformer
+        self.n_head = waveformer.n_head
+        self.d_model = waveformer.d_model
+
+        pos = waveformer.pos_emb(waveformer.pos)
+
+        self.register_buffer('emb', emb.detach().tanh())
+
+        self.register_buffer(
+            'condition_W', waveformer.condition.weight.squeeze().detach())
+
+        self.attn_norms = nn.ModuleList()
+        self.FFs = nn.ModuleList()
+
+        self.kv_nets = nn.ModuleList()
+        self.q_nets = nn.ModuleList()
+        self.o_nets = nn.ModuleList()
+        head_r = []
+
+        for layer in waveformer.layers:
+            self.attn_norms.append(layer.attn_norm)
+            self.FFs.append(layer.FF)
+            self.kv_nets.append(layer.Attn.kv_net)
+            self.q_nets.append(layer.Attn.q_net)
+            self.o_nets.append(layer.Attn.o_net)
+            head_r.append(layer.Attn.r_net(pos).view(
+                pos.size(0), self.n_head, -1).detach())
+            self.scale = layer.Attn.scale
+
+        self.register_buffer('head_r', torch.stack(head_r, dim=0))
+        self.register_buffer(
+            'last_weight', waveformer.linear_proj.weight.detach())
+        self.register_buffer('last_bias', waveformer.linear_proj.bias.detach())
+
+    def forward(self, y: torch.Tensor, c: float = 1.):
+        num_cls = self.last_weight.shape[0]
+
+        buffers = [None] * self.head_r.size(0)
+
+        y = self.condition_W @ y 
+
+        outputs = y.new_empty(y.size(1), dtype=torch.int64)
+        samples = torch.rand(y.size(1), device=y.device)
+        x = self.emb[num_cls // 2 - 1]
+        for i in tqdm(range(y.size(1))):
+            cond = y[:, i]
+            for j in range(len(buffers)):
+                mem = buffers[j]
+                x = cond + x
+                tmp = self.attn_norms[j](x[None, None, :])
+                head_kv = self.kv_nets[j](tmp).squeeze()
+                head_q = self.q_nets[j](tmp).view(self.n_head, -1)
+
+                if mem is not None: 
+                    kv = torch.cat([mem, head_kv.unsqueeze(0)], dim=0) 
+                else:
+                    kv = head_kv.unsqueeze(0)
+                if kv.size(0) == self.head_r.size(1):
+                    mem = kv[1:]
+                else:
+                    mem = kv
+                buffers[j] = mem
+
+                k, v = kv.chunk(2, dim=1)
+                k = k.reshape(k.size(0), self.n_head, -1) + self.head_r[j, -k.size(0):]
+                v = v.reshape(v.size(0), self.n_head, -1)
+                attn_scores = k.transpose(0, 1) @ head_q.unsqueeze(-1) * self.scale
+                attn_weights = F.softmax(attn_scores, dim=1)
+                out = attn_weights.transpose(1, 2) @ v.transpose(0, 1)
+                out = self.o_nets[j](out.view(1, -1)).squeeze()
+                x = out + x
+                x = x + self.FFs[j](x[None, None, :]).squeeze()
+        
+            logits = torch.addmv(self.last_bias, self.last_weight, x)
+            logits.mul_(c)
+            cum_probs = logits.softmax(0).cumsum_(0)
+            new_x = torch.nonzero(cum_probs > samples[i])[0].squeeze()
+            outputs[i] = new_x
+            x = self.emb[new_x]
+
+        return outputs
 
 
 class FastWaveNet(nn.Module):

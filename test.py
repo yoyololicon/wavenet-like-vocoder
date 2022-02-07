@@ -3,11 +3,12 @@ import argparse
 import torch
 from torch.cuda import amp
 import torchaudio
+
 from utils import remove_weight_norms
 from time import time
 import math
 
-from model import LightModel, WaveNet, FastWaveNet, FFTNet, FastFFTNet
+from model import LightModel, WaveNet, FastWaveNet, FFTNet, FastFFTNet, Waveformer, FastWaveformer
 
 
 def main(ckpt, infile, outfile, half):
@@ -20,7 +21,8 @@ def main(ckpt, infile, outfile, half):
 
     infer_model = {
         WaveNet: FastWaveNet,
-        FFTNet: FastFFTNet
+        FFTNet: FastFFTNet,
+        Waveformer: FastWaveformer
     }[type(model)](model, emb[0].weight.detach())
 
     device = torch.device('cpu')
