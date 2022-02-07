@@ -14,7 +14,6 @@ import model.upsample as module_upsample
 import datasets as module_data
 from utils import get_instance
 
-
 class LightModel(pl.LightningModule):
     model: MemModel
     conditioner: nn.Module
@@ -22,50 +21,39 @@ class LightModel(pl.LightningModule):
     criterion: nn.Module
     emb: nn.Sequential
 
-    @staticmethod
-    def add_model_specific_args(parent_parser: ArgumentParser):
-        parser = parent_parser.add_argument_group('Lightning')
-        parser.add_argument('--q_channels', type=int, default=256)
-        parser.add_argument('--emb_channels', type=int, default=128)
-        parser.add_argument('--memory_segment', type=int)
-        parser.add_argument('--padding_method', type=str,
-                            choices=['same', 'valid'], default='same')
-        return parent_parser
-
-    def __init__(self, q_channels: int, emb_channels: int, padding_method: str,
-                 memory_segment: int,
-                 config_dict: dict = None, **kwargs) -> None:
+    def __init__(self,
+                 cfg: dict = None,
+                 **kwargs) -> None:
         super().__init__()
-
-        self.save_hyperparameters(config_dict)
-        self.save_hyperparameters(kwargs)
-        self.save_hyperparameters(
-            "q_channels", "padding_method", "emb_channels", "memory_segment")
-
-        if self.hparams.memory_segment is not None:
+        # converting omegaconf into python dict
+        # I usually don't use save_hyperparameters
+        # since hydra already helps you to save a copy of the copy after each run   
+        self.cfg = cfg
+        
+        if self.cfg.memory_segment is not None:
             self.automatic_optimization = False
 
-        model = get_instance(module_arch, self.hparams.arch)
-        conditioner = get_instance(module_condition, self.hparams.conditioner)
-        upsampler = get_instance(module_upsample, self.hparams.upsampler)
+        model = get_instance(module_arch, self.cfg.arch)
+        conditioner = get_instance(module_condition, self.cfg.conditioner)
+        upsampler = get_instance(module_upsample, self.cfg.upsampler)
 
         self.model = model
         self.conditioner = conditioner
         self.upsampler = upsampler
-        self.emb = nn.Sequential(nn.Embedding(self.hparams.q_channels, self.hparams.emb_channels),
+        self.emb = nn.Sequential(nn.Embedding(self.cfg.q_channels, self.cfg.emb_channels),
                                  nn.Tanh())
-        self.enc = MuLawEncoding(self.hparams.q_channels)
-        self.dec = MuLawDecoding(self.hparams.q_channels)
+        self.enc = MuLawEncoding(self.cfg.q_channels)
+        self.dec = MuLawDecoding(self.cfg.q_channels)
 
     def configure_optimizers(self):
         optimizer = get_instance(
-            torch.optim, self.hparams.optimizer, self.parameters())
+            torch.optim, self.cfg.optimizer, self.parameters())
         return optimizer
 
     def train_dataloader(self):
-        train_data = get_instance(module_data, self.hparams.dataset)
+        train_data = get_instance(module_data, self.cfg.dataset)
         train_loader = DataLoader(
-            train_data, **self.hparams.data_loader)
+            train_data, **self.cfg.data_loader)
         return train_loader
 
     def training_step(self, batch, batch_idx):
@@ -77,7 +65,7 @@ class LightModel(pl.LightningModule):
         y = self.enc(y)
         x = self.emb(x).transpose(1, 2)
         pred = self.model(
-            x, cond, zeropad=True if self.hparams.padding_method == 'same' else False)
+            x, cond, zeropad=True if self.cfg.padding_method == 'same' else False)
         y = y[:, -pred.shape[-1]:]
         loss = F.cross_entropy(pred.unsqueeze(-1), y.unsqueeze(-1))
         self.log('loss', loss, prog_bar=False, on_step=True)
@@ -91,7 +79,7 @@ class LightModel(pl.LightningModule):
         assert x.shape[-1] == y.shape[-1] == cond.shape[-1]
         total_size = y.numel()
         memories = self.model.init_memories(x.size(0), device=x.device)
-        chunk_size = self.hparams.memory_segment
+        chunk_size = self.cfg.memory_segment
 
         opt = self.optimizers()
         opt.zero_grad()
